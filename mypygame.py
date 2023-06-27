@@ -3,8 +3,246 @@ from pygame.locals import *
 import math
 import csv
 from queue import PriorityQueue
-import heapq
+import heapq  
 
+def get_grid_from_csv():
+    csv_file = "grid.csv"
+    with open(csv_file, 'r') as file:
+        reader = csv.reader(file)
+        grid = list(reader)
+    grid_coordinates = []
+    for y, row in enumerate(grid):
+        for x, cell in enumerate(row):
+            if cell == 'x':
+                grid_coordinates.append((x, y))
+    return grid,grid_coordinates
+
+def setup_walls(grid):
+    walls = []
+
+    # Find horizontal walls
+    for y in range(len(grid)):
+        current_wall_start = None
+        current_wall_end = None
+        for x in range(len(grid[y])):
+            if (x, y) in grid_coordinates:
+                if current_wall_start is None:
+                    current_wall_start = (x, y)
+                current_wall_end = (x, y)
+            else:
+                if current_wall_start is not None:
+                    wall_width = current_wall_end[0] - current_wall_start[0] + 1
+                    wall_height = current_wall_end[1] - current_wall_start[1] + 1
+                    pos_x = current_wall_start[0] * wall_thickness
+                    pos_y = current_wall_start[1] * wall_thickness
+                    wall_rect = pygame.Rect(pos_x, pos_y, wall_width * wall_thickness, wall_thickness)
+                    walls.append(wall_rect)
+                    for i in range(current_wall_start[0], current_wall_end[0] + 1):
+                        grid_coordinates.remove((i, y))
+                    current_wall_start = None
+                    current_wall_end = None
+
+        if current_wall_start is not None:
+            wall_width = current_wall_end[0] - current_wall_start[0] + 1
+            wall_height = current_wall_end[1] - current_wall_start[1] + 1
+            pos_x = current_wall_start[0] * wall_thickness
+            pos_y = current_wall_start[1] * wall_thickness
+            wall_rect = pygame.Rect(pos_x, pos_y, wall_width * wall_thickness, wall_thickness)
+            walls.append(wall_rect)
+            for i in range(current_wall_start[0], current_wall_end[0] + 1):
+                grid_coordinates.remove((i, y))
+
+    # Find vertical walls
+    for x in range(len(grid[0])):
+        current_wall_start = None
+        current_wall_end = None
+        for y in range(len(grid)):
+            if (x, y) in grid_coordinates:
+                if current_wall_start is None:
+                    current_wall_start = (x, y)
+                current_wall_end = (x, y)
+            else:
+                if current_wall_start is not None:
+                    wall_width = wall_thickness
+                    wall_height = current_wall_end[1] - current_wall_start[1] + 1
+                    pos_x = current_wall_start[0] * wall_thickness
+                    pos_y = current_wall_start[1] * wall_thickness
+                    wall_rect = pygame.Rect(pos_x, pos_y, wall_thickness, wall_height * wall_thickness)
+                    walls.append(wall_rect)
+                    for i in range(current_wall_start[1], current_wall_end[1] + 1):
+                        grid_coordinates.remove((x, i))
+                    current_wall_start = None
+                    current_wall_end = None
+
+        if current_wall_start is not None:
+            wall_width = wall_thickness
+            wall_height = current_wall_end[1] - current_wall_start[1] + 1
+            pos_x = current_wall_start[0] * wall_thickness
+            pos_y = current_wall_start[1] * wall_thickness
+            wall_rect = pygame.Rect(pos_x, pos_y, wall_thickness, wall_height * wall_thickness)
+            walls.append(wall_rect)
+            for i in range(current_wall_start[1], current_wall_end[1] + 1):
+                grid_coordinates.remove((x, i))
+
+    for y, row in enumerate(grid):
+        for x, cell in enumerate(row):
+            if cell in ['m','g','d']:
+                if cell == 'm':
+                    enemy = BasicMonster()
+                if cell == 'g':
+                    enemy = HumanGuard()
+                if cell == 'd':
+                    enemy = MilitaryDrone()
+                enemy.x = x * wall_thickness
+                enemy.y = y * wall_thickness
+                enemy.rect = pygame.Rect(enemy.x,enemy.y,enemy.size,enemy.size)
+                enemies.append(enemy)
+            
+            elif cell == 's': # check for switches
+                pos_x = x * wall_thickness
+                pos_y = y * wall_thickness
+                switch = Switch(pos_x,pos_y)
+                switch.rect = pygame.Rect(pos_x, pos_y, wall_thickness, wall_thickness)
+                switches.append(switch)
+            elif cell == 'c': # check for chests
+                pos_x = x * wall_thickness
+                pos_y = y * wall_thickness
+                chest = Chest(pos_x,pos_y)
+                chest.rect = pygame.Rect(pos_x, pos_y, wall_thickness, wall_thickness)
+                chests.append(chest)
+
+
+    return walls # because walls = setup_walls()
+
+
+def chest_behaviour(chests,switches):
+    for chest in chests:
+        chest.try_opening(switches)
+        if chest.closed == True:
+            pygame.draw.rect(window, PINK, (chest.x, chest.y, chest.size, chest.size))
+        else:
+            pygame.draw.rect(window, GREEN, (chest.x, chest.y, chest.size, chest.size))
+
+def enemy_behaviour(enemies,you,walls):
+    if not you.stealth: # you = Player()
+
+        for enemy in enemies:
+            if enemy.check_time == 0: 
+                enemy.noticed_player = enemy.check_obstacles_in_line(you,walls)
+                enemy.check_time = 120
+            else:
+                enemy.check_time -= 1
+
+    for enemy in enemies:
+        enemy.original_x = enemy.x
+        enemy.original_y = enemy.y
+
+        angle,distance = get_angle_and_distance(you,enemy)
+
+        if not enemy.name == 'Military Drone': # this must be updated. we assume the mosnter will always go towards you, which might not always be the case
+
+            if enemy.noticed_player:
+               
+                if len(enemy.path) == 0:
+                        
+                    enemy.path = enemy.a_star((enemy.x,enemy.y),(you.x,you.y),walls)[1:]
+                    enemy.close_on_you(you)
+                   
+                else:
+                    enemy.close_on_you(enemy.path[0])
+                    if enemy.rect.colliderect(enemy.path[0][0],enemy.path[0][1],10,10):
+                        enemy.path = enemy.path[1:]
+                
+
+        else:
+            enemy.drone_linger(you)
+             
+        for enemy in enemies:
+            enemy.rect = pygame.Rect(enemy.x, enemy.y, enemy.size, enemy.size)
+            enemy.countdown()
+
+            #angle,distance = get_angle_and_distance(you,enemy)
+    
+            #enemy.shoot_projectile(1* math.cos(angle),1* math.sin(angle),projectiles)    # unaimed shot
+            
+            if enemy.noticed_player:
+                predicted_x, predicted_y = predict_target_position(you.x, you.y, (you.x-you.original_x,you.y-you.original_y),  8)
+                
+                angle,distance = get_angle_and_distance((predicted_x,predicted_y), enemy)
+
+                enemy.shoot_projectile(1* math.cos(angle),1* math.sin(angle),projectiles) 
+
+        for enemy in enemies:
+            avoid_wall_collision(enemy)
+
+        if not you.immunity['immunity']:
+            for enemy in enemies:
+                if enemy.rect.colliderect(you):
+                    
+                    you.inflict_status(bind)
+
+
+def switch_behaviour(switches,you):
+    for switch in switches:
+        if switch.state == True:
+            pygame.draw.rect(window, GREEN, (switch.x, switch.y, switch.size, switch.size))
+        else:
+            pygame.draw.rect(window, (140,110,23), (switch.x, switch.y, switch.size, switch.size))
+        
+        if switch.rect.colliderect(you):
+            switch.switch()
+
+def area_behaviour(areas, you):
+    for area in areas:
+        circle_surface = pygame.Surface((200, 200), pygame.SRCALPHA)
+        circle_color = pygame.Color(71, 136, 0, 100)
+        circle_radius = 100
+        pygame.draw.circle(circle_surface, circle_color, (100, 100), circle_radius)
+        window.blit(circle_surface, (area.x, area.y))
+        area.deal_damage(you)
+
+def projectile_behaviour(projectiles,enemies):
+    for projectile in projectiles:
+        for enemy in enemies:
+            if enemy.rect.colliderect(projectile):
+                if projectile.owner not in enemies:
+                    enemy.hp -= projectile.damage
+                    if enemy.hp <= 0:
+                        enemies.remove(enemy)
+                    projectiles.remove(projectile)
+        projectile.update()
+        projectile.draw()
+
+def bottom_text_render(you,enemies,chests):
+    
+    text = font.render(str(you.immunity['immunity'])+str(you.status), True, (0, 0, 0))
+   
+    text_rect = text.get_rect()
+    text_rect.center = (window_width -60, 40)
+    window.blit(text, text_rect)
+    text = font.render(str(you.teleport_countdown)+ '  ' + str(int(you.x)) + '  ' + str(int(you.y)), True, (0, 0, 0))
+    text_rect = text.get_rect()
+    text_rect.center = (window_width -200, 40)
+    window.blit(text, text_rect)
+    text = font.render(str(len(projectiles)), True, (0, 0, 0))
+    text_rect = text.get_rect()
+    text_rect.center = (window_width -360, 40)
+    window.blit(text, text_rect)
+    text = font.render(
+        f'Your HP: {str(you.hp)}',
+        True, 
+        (0, 0, 0) 
+        )
+    text_rect = text.get_rect()
+    text_rect.center = (window_width -400, 300+100)
+    window.blit(text, text_rect)
+    who_says = None
+    for enemy in enemies + chests:
+        if calculate_distance((you.x,you.y),(enemy.x+enemy.size/2,enemy.y+enemy.size/2)) < 200:
+                who_says = enemy
+                break
+    if who_says:
+        say_sth(who_says,who_says.text)
 
 def say_sth(who, what_says):
 
@@ -74,6 +312,15 @@ def avoid_wall_collision(who):
         if not wall.colliderect(whox):
 
             if [wall.colliderect(whox) for wall in walls].count(True) == 0:
+                # change_x = who.x - who.original_x
+                # change_y = who.y - who.original_y
+                
+                # if abs(change_x) > 50: # case: you teleported. 50 is a random big number here... 
+                #     who.x += 15
+                # elif abs(change_y) > 50:
+                #     who.y += 15
+                
+                # else:  # case: you did not teleport
                 who.x = who.original_x # if you.x + you.speed doesnt cause collision, we can only move in y axis
             else:
                 who.x = who.original_x
@@ -182,7 +429,7 @@ class Character:
         self.status = dict()
         self.equipped_items = dict()
 
-        self.shot_cooldown_time = 20 # later will have to be moved into the paricular weapon you use, eg bow, gun, etc
+        self.shot_cooldown_time = 60 # later will have to be moved into the paricular weapon you use, eg bow, gun, etc
         self.shot_countdown = 0
         self.path = []
         self.noticed_player = False
@@ -381,11 +628,66 @@ class Player(Character):
                     self.teleport_countdown = 60
             if self.teleport_countdown > 0:
                 self.teleport_countdown -= 1 
-    
+
+    def check_for_and_activate_spells(self,keys):
+        if keys[K_i]:
+            if 'barrier' in self.learned_spells:
+                if self.immunity['immunity'] == False:
+                    self.immunity_up()
+        if keys[K_s]:
+            self.stealth = not self.stealth
+
     def immunity_up(self):
         self.immunity['immunity'] = True
         you.immunity['duration'] = 300
+    
+    def immunity_check_and_setup(self):
+        if you.immunity['duration']>0:
+            you.immunity['duration'] -= 1
+        if you.immunity['escape']>0:
+            you.immunity['escape'] -= 1
+        if you.immunity['duration'] ==0:
+            you.immunity['immunity'] = False
 
+    def try_shooting(self):
+        if event.type == pygame.MOUSEBUTTONUP:
+            
+            pos = pygame.mouse.get_pos()
+
+            angle,distance = get_angle_and_distance(pos,you)
+            if 'Bind' not in you.status:
+                you.shoot_projectile(1* math.cos(angle),1* math.sin(angle),projectiles)   
+
+
+
+    def control_your_movement(self,keys):
+
+        if (keys[K_LEFT] or keys[K_RIGHT]) and (keys[K_UP] or keys[K_DOWN]):
+            modifier = math.sqrt(2)/2
+        else:
+            modifier = 1
+
+        modifier *= 1.2
+
+        your_speed = you.get_stats('speed')
+
+        you.original_x = you.x
+        you.original_y = you.y
+        
+        if keys[K_LEFT]:
+            you.x -= your_speed *modifier
+        if keys[K_RIGHT]:
+            you.x += your_speed *modifier
+        if keys[K_UP]:
+            you.y -= your_speed *modifier
+        if keys[K_DOWN]:
+            you.y += your_speed *modifier
+
+        you.teleport(keys)
+        
+
+        you.rect = pygame.Rect(you.x, you.y, you.size, you.size)
+        avoid_wall_collision(you)
 
     def attempt_escape(self):
         if you.immunity['left_or_right'] == 'left':
@@ -551,7 +853,7 @@ class Chest():
         self.size = 10
         self.text = 'this only opens when all switches are opened'
     
-    def open(self):
+    def try_opening(self,switches):
         if all(switch.state == True for switch in switches):
             self.closed = False
 
@@ -624,10 +926,7 @@ PINK = (255,192,203)
 
 # Set up the walls
 wall_thickness = 20
-csv_file = "grid.csv"
-with open(csv_file, 'r') as file:
-    reader = csv.reader(file)
-    grid = list(reader)
+
 
 # Create a list to store the walls
 walls = []
@@ -638,104 +937,10 @@ areas = []
 # Iterate over the grid and create walls based on the CSV contents
 # Initialize variables
 # Convert CSV data to a list of grid coordinates
-grid_coordinates = []
-for y, row in enumerate(grid):
-    for x, cell in enumerate(row):
-        if cell == 'x':
-            grid_coordinates.append((x, y))
 
-walls = []
+grid,grid_coordinates = get_grid_from_csv()
 
-# Find horizontal walls
-for y in range(len(grid)):
-    current_wall_start = None
-    current_wall_end = None
-    for x in range(len(grid[y])):
-        if (x, y) in grid_coordinates:
-            if current_wall_start is None:
-                current_wall_start = (x, y)
-            current_wall_end = (x, y)
-        else:
-            if current_wall_start is not None:
-                wall_width = current_wall_end[0] - current_wall_start[0] + 1
-                wall_height = current_wall_end[1] - current_wall_start[1] + 1
-                pos_x = current_wall_start[0] * wall_thickness
-                pos_y = current_wall_start[1] * wall_thickness
-                wall_rect = pygame.Rect(pos_x, pos_y, wall_width * wall_thickness, wall_thickness)
-                walls.append(wall_rect)
-                for i in range(current_wall_start[0], current_wall_end[0] + 1):
-                    grid_coordinates.remove((i, y))
-                current_wall_start = None
-                current_wall_end = None
-
-    if current_wall_start is not None:
-        wall_width = current_wall_end[0] - current_wall_start[0] + 1
-        wall_height = current_wall_end[1] - current_wall_start[1] + 1
-        pos_x = current_wall_start[0] * wall_thickness
-        pos_y = current_wall_start[1] * wall_thickness
-        wall_rect = pygame.Rect(pos_x, pos_y, wall_width * wall_thickness, wall_thickness)
-        walls.append(wall_rect)
-        for i in range(current_wall_start[0], current_wall_end[0] + 1):
-            grid_coordinates.remove((i, y))
-
-# Find vertical walls
-for x in range(len(grid[0])):
-    current_wall_start = None
-    current_wall_end = None
-    for y in range(len(grid)):
-        if (x, y) in grid_coordinates:
-            if current_wall_start is None:
-                current_wall_start = (x, y)
-            current_wall_end = (x, y)
-        else:
-            if current_wall_start is not None:
-                wall_width = wall_thickness
-                wall_height = current_wall_end[1] - current_wall_start[1] + 1
-                pos_x = current_wall_start[0] * wall_thickness
-                pos_y = current_wall_start[1] * wall_thickness
-                wall_rect = pygame.Rect(pos_x, pos_y, wall_thickness, wall_height * wall_thickness)
-                walls.append(wall_rect)
-                for i in range(current_wall_start[1], current_wall_end[1] + 1):
-                    grid_coordinates.remove((x, i))
-                current_wall_start = None
-                current_wall_end = None
-
-    if current_wall_start is not None:
-        wall_width = wall_thickness
-        wall_height = current_wall_end[1] - current_wall_start[1] + 1
-        pos_x = current_wall_start[0] * wall_thickness
-        pos_y = current_wall_start[1] * wall_thickness
-        wall_rect = pygame.Rect(pos_x, pos_y, wall_thickness, wall_height * wall_thickness)
-        walls.append(wall_rect)
-        for i in range(current_wall_start[1], current_wall_end[1] + 1):
-            grid_coordinates.remove((x, i))
-
-for y, row in enumerate(grid):
-    for x, cell in enumerate(row):
-        if cell in ['m','g','d']:
-            if cell == 'm':
-                enemy = BasicMonster()
-            if cell == 'g':
-                enemy = HumanGuard()
-            if cell == 'd':
-                enemy = MilitaryDrone()
-            enemy.x = x * wall_thickness
-            enemy.y = y * wall_thickness
-            enemy.rect = pygame.Rect(enemy.x,enemy.y,enemy.size,enemy.size)
-            enemies.append(enemy)
-        
-        elif cell == 's': # check for switches
-            pos_x = x * wall_thickness
-            pos_y = y * wall_thickness
-            switch = Switch(pos_x,pos_y)
-            switch.rect = pygame.Rect(pos_x, pos_y, wall_thickness, wall_thickness)
-            switches.append(switch)
-        elif cell == 'c': # check for chests
-            pos_x = x * wall_thickness
-            pos_y = y * wall_thickness
-            chest = Chest(pos_x,pos_y)
-            chest.rect = pygame.Rect(pos_x, pos_y, wall_thickness, wall_thickness)
-            chests.append(chest)
+walls = setup_walls(grid)
 
          
 
@@ -751,118 +956,24 @@ while running:
     for event in pygame.event.get():
         if event.type == QUIT:
             running = False
-
-        if event.type == pygame.MOUSEBUTTONUP:
-            
-            pos = pygame.mouse.get_pos()
-
-            angle,distance = get_angle_and_distance(pos,you)
-            if 'Bind' not in you.status:
-                you.shoot_projectile(1* math.cos(angle),1* math.sin(angle),projectiles)    
+        you.try_shooting()
+ 
 
     # Get the current state of the keyboard
     keys = pygame.key.get_pressed()
     
     # Update the player's position based on the pressed keys
-    
-
 
     if 'Bind' in you.status:
         you.attempt_escape()
     else:
+        you.control_your_movement(keys)    # Update the enemy's position to move towards the player
 
-        if (keys[K_LEFT] or keys[K_RIGHT]) and (keys[K_UP] or keys[K_DOWN]):
-            modifier = math.sqrt(2)/2
-        else:
-            modifier = 1
+    you.immunity_check_and_setup()
 
-        modifier *= 1.2
+    #print(you.stealth)
 
-        your_speed = you.get_stats('speed')
-
-        you.original_x = you.x
-        you.original_y = you.y
-        
-        if keys[K_LEFT]:
-            you.x -= your_speed *modifier
-        if keys[K_RIGHT]:
-            you.x += your_speed *modifier
-        if keys[K_UP]:
-            you.y -= your_speed *modifier
-        if keys[K_DOWN]:
-            you.y += your_speed *modifier
-
-        you.teleport(keys)
-        
-
-        you.rect = pygame.Rect(you.x, you.y, you.size, you.size)
-        avoid_wall_collision(you)
-
-        # Update the enemy's position to move towards the player
-
-    if you.immunity['duration']>0:
-        you.immunity['duration'] -= 1
-    if you.immunity['escape']>0:
-        you.immunity['escape'] -= 1
-    if you.immunity['duration'] ==0:
-        you.immunity['immunity'] = False
-
-    if not you.stealth:
-
-        for enemy in enemies:
-            if enemy.check_time == 0: 
-                enemy.noticed_player = enemy.check_obstacles_in_line(you,walls)
-                enemy.check_time = 120
-            else:
-                enemy.check_time -= 1
-
-    for enemy in enemies:
-        enemy.original_x = enemy.x
-        enemy.original_y = enemy.y
-
-        angle,distance = get_angle_and_distance(you,enemy)
-
-        if not enemy.name == 'Military Drone': # this must be updated. we assume the mosnter will always go towards you, which might not always be the case
-
-            if enemy.noticed_player:
-               
-                if len(enemy.path) == 0:
-                        
-                    enemy.path = enemy.a_star((enemy.x,enemy.y),(you.x,you.y),walls)[1:]
-                    enemy.close_on_you(you)
-                   
-                else:
-                    enemy.close_on_you(enemy.path[0])
-                    if enemy.rect.colliderect(enemy.path[0][0],enemy.path[0][1],10,10):
-                        enemy.path = enemy.path[1:]
-                
-
-        else:
-            enemy.drone_linger(you)
-             
-        for enemy in enemies:
-            enemy.rect = pygame.Rect(enemy.x, enemy.y, enemy.size, enemy.size)
-            enemy.countdown()
-
-            #angle,distance = get_angle_and_distance(you,enemy)
-    
-            #enemy.shoot_projectile(1* math.cos(angle),1* math.sin(angle),projectiles)    # unaimed shot
-            
-            if enemy.noticed_player:
-                predicted_x, predicted_y = predict_target_position(you.x, you.y, (you.x-you.original_x,you.y-you.original_y),  8)
-                
-                angle,distance = get_angle_and_distance((predicted_x,predicted_y), enemy)
-
-                enemy.shoot_projectile(1* math.cos(angle),1* math.sin(angle),projectiles) 
-
-        for enemy in enemies:
-            avoid_wall_collision(enemy)
-
-        if not you.immunity['immunity']:
-            for enemy in enemies:
-                if enemy.rect.colliderect(you):
-                    
-                    you.inflict_status(bind)
+    enemy_behaviour(enemies, you, walls)
 
     # Draw the background
     window.fill((255, 255, 255))
@@ -878,90 +989,25 @@ while running:
     for enemy in enemies:
         pygame.draw.rect(window, RED, (enemy.x, enemy.y, enemy.size, enemy.size))
     
-    for switch in switches:
-        if switch.state == True:
-            pygame.draw.rect(window, GREEN, (switch.x, switch.y, switch.size, switch.size))
-        else:
-            pygame.draw.rect(window, (140,110,23), (switch.x, switch.y, switch.size, switch.size))
-        
-        if switch.rect.colliderect(you):
-            switch.switch()
-    for chest in chests:
-        chest.open()
-        if chest.closed == True:
-            pygame.draw.rect(window, PINK, (chest.x, chest.y, chest.size, chest.size))
-        else:
-            pygame.draw.rect(window, GREEN, (chest.x, chest.y, chest.size, chest.size))
-        
+    switch_behaviour(switches,you)
+
+    chest_behaviour(chests,switches)
+
+    # area gives you a damage over time, think fire, poison gas etc. the one i set up is for test
 
     a = Area(600,450,100,1/30)
     areas = []
     areas += [a]
-    for area in areas:
-        circle_surface = pygame.Surface((200, 200), pygame.SRCALPHA)
-        circle_color = pygame.Color(71, 136, 0, 100)
-        circle_radius = 100
-        pygame.draw.circle(circle_surface, circle_color, (100, 100), circle_radius)
-        window.blit(circle_surface, (area.x, area.y))
-        area.deal_damage(you)
 
-    for projectile in projectiles:
-        for enemy in enemies:
-            if enemy.rect.colliderect(projectile):
-                if projectile.owner not in enemies:
-                    enemy.hp -= projectile.damage
-                    if enemy.hp <= 0:
-                        enemies.remove(enemy)
-                    projectiles.remove(projectile)
-        projectile.update()
-        projectile.draw()
+    area_behaviour(areas, you)
 
-    you.countdown()
+    projectile_behaviour(projectiles,enemies) # draw projectile, check if it hits anything etc
+
+    you.countdown() # related to shooting? change name
     
-    
-    if keys[K_i]:
-        if 'barrier' in you.learned_spells:
-            if you.immunity['immunity'] == False:
-                you.immunity_up()
-    if keys[K_s]:
-        you.stealth = not you.stealth
+    you.check_for_and_activate_spells(keys)
 
-    text = font.render(str(you.immunity['immunity'])+str(you.status), True, (0, 0, 0))
-   
-    text_rect = text.get_rect()
-    text_rect.center = (window_width -60, 40)
-    window.blit(text, text_rect)
-    
-    text = font.render(str(you.teleport_countdown)+ '  ' + str(int(you.x)) + '  ' + str(int(you.y)), True, (0, 0, 0))
-   
-    text_rect = text.get_rect()
-    text_rect.center = (window_width -200, 40)
-    window.blit(text, text_rect)
-
-    text = font.render(str(len(projectiles)), True, (0, 0, 0))
-   
-    text_rect = text.get_rect()
-    text_rect.center = (window_width -360, 40)
-    window.blit(text, text_rect)
-
-    text = font.render(
-        f'Your HP: {str(you.hp)}',
-        True, 
-        (0, 0, 0) 
-        )
-    text_rect = text.get_rect()
-    text_rect.center = (window_width -400, 300+100)
-    window.blit(text, text_rect)
-
-    who_says = None
-    for enemy in enemies + chests:
-        if calculate_distance((you.x,you.y),(enemy.x+enemy.size/2,enemy.y+enemy.size/2)) < 200:
-            who_says = enemy
-
-            break
-    if who_says:
-        say_sth(who_says,who_says.text)
-
+    bottom_text_render(you,enemies,chests) # render what the enemies are saying
 
     # Update the display
     pygame.display.update()
