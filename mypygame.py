@@ -516,15 +516,12 @@ class Character:
 
     def attack(self, whom):
         my_damage = self.get_stats('strength')
-        print("{} attacks for {} damage.".format(self.name, my_damage))
+     
         whom.receive_damage(my_damage)
 
     def receive_damage(self, damage):
         self.hp -= damage
-        if self.hp <= 0:
-            print("{} has been defeated!".format(self.name))
-        else:
-            print("{} received {} damage. Remaining HP: {}".format(self.name, damage, self.hp))
+
 
     def inflict_status(self, status_effect):
         self.status[status_effect.__class__.__name__] = status_effect
@@ -603,27 +600,37 @@ class Player(Character):
     def learn_spell(self, spell):
         spell_methods = [getattr(spell, method) for method in dir(spell) if callable(getattr(spell, method)) and not method.startswith("__")]
         self.learned_spells = self.learned_spells.union(spell_methods)
-
-    def teleport(self, keys):
+    
+    def teleport(self, keys, walls):
         if 'teleport' in self.learned_spells:
-            #say_sth(you,str(self.teleport_countdown))
             if keys[K_SPACE]:
-
                 if self.teleport_countdown == 0:
-                    
+                    change_x = 0
+                    change_y = 0
                     if keys[K_RIGHT]:
-                        self.x += 400
+                        change_x = 1
                     elif keys[K_LEFT]:
-                        self.x -= 400
-                    else:
-                        self.x += 0
+                        change_x = -1
                     if keys[K_DOWN]:
-                        self.y += 400
+                        change_y = 1
                     elif keys[K_UP]:
-                        self.y -=400
-                    else:
-                        self.y += 0
-                        print(keys[K_RIGHT] or keys[K_DOWN])
+                        change_y = -1
+
+                    new_x = self.x + 400 * change_x
+                    new_y = self.y + 400 * change_y
+                    new_rect = pygame.Rect(new_x, new_y, 8, 8)
+
+                    collision_detected = False
+                    for wall in walls:
+                        if new_rect.colliderect(wall):
+                            collision_detected = True
+                            break
+
+                    if not collision_detected:
+                        self.x = new_x
+                        self.y = new_y
+                        self.rect = new_rect
+ 
 
                     self.teleport_countdown = 60
             if self.teleport_countdown > 0:
@@ -660,7 +667,7 @@ class Player(Character):
 
 
 
-    def control_your_movement(self,keys):
+    def control_your_movement(self,keys,walls):
 
         if (keys[K_LEFT] or keys[K_RIGHT]) and (keys[K_UP] or keys[K_DOWN]):
             modifier = math.sqrt(2)/2
@@ -682,12 +689,11 @@ class Player(Character):
             you.y -= your_speed *modifier
         if keys[K_DOWN]:
             you.y += your_speed *modifier
-
-        you.teleport(keys)
         
 
         you.rect = pygame.Rect(you.x, you.y, you.size, you.size)
         avoid_wall_collision(you)
+        you.teleport(keys,walls)
 
     def attempt_escape(self):
         if you.immunity['left_or_right'] == 'left':
@@ -898,6 +904,8 @@ class Area():
 # Initialize Pygame
 pygame.init()
 
+print('start')
+
 # Set up the display
 window_width, window_height = 1600, 900
 window = pygame.display.set_mode((window_width, window_height))
@@ -967,11 +975,10 @@ while running:
     if 'Bind' in you.status:
         you.attempt_escape()
     else:
-        you.control_your_movement(keys)    # Update the enemy's position to move towards the player
+        you.control_your_movement(keys,walls)    # Update the enemy's position to move towards the player
 
     you.immunity_check_and_setup()
 
-    #print(you.stealth)
 
     enemy_behaviour(enemies, you, walls)
 
@@ -983,7 +990,10 @@ while running:
         pygame.draw.rect(window, GRAY, wall)
 
     # Draw the player
-    pygame.draw.rect(window, BLUE, (you.x, you.y, your_size, your_size))
+    if you.teleport_countdown > 0:
+        pygame.draw.rect(window, GREEN, (you.x, you.y, your_size, your_size))
+    else:
+        pygame.draw.rect(window, BLUE, (you.x, you.y, your_size, your_size))
 
     # Draw the enemy
     for enemy in enemies:
